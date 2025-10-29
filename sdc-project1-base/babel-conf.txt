@@ -1,0 +1,21 @@
+## Configuration file for the SDC example on lab 1
+
+# Distributed Log Manager
+address 127.0.0.1
+
+#server_port 5001 - this one is different for each process on the same machine and you must provide
+
+# Broadcast Protocol Configuration
+
+# Static Membership Protocol Configuration
+
+# membership.myhost - this one is different for each process and you must provide
+membership.neighbors 127.0.0.1:5000,127.0.0.1:6000,127.0.0.1:7000,127.0.0.1:8000
+
+# Crypto configuration parameters
+
+# crypto_name - this one is different for each process and you have to provide in the command line
+key_store_folder crypto-material
+key_store_password password
+trust_store crypto-material/truststore.ks
+trust_store_password password
