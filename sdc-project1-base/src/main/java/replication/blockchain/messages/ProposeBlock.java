@@ -22,11 +22,11 @@ public class ProposeBlock extends SignedProtoMessage{
     public final static short MSG_ID = 901;
 
     private UUID blockId;
-    private byte[] previousBlockHash;
+    private byte[] previousBlockHash; //hash of the previous block
     private long index;
     private long round;
     private Host proposer;
-    private List<byte[]> transactions;
+    private List<byte[]> transactions; //list of transactions (client requests) serialized
     private byte[] signature;
 
     public ProposeBlock(UUID blockID, byte[] previousBlockHash, long index, long round, Host proposer, List<byte[]> transactions) {
@@ -105,6 +105,16 @@ public class ProposeBlock extends SignedProtoMessage{
             msg.signature = signature;
         }
         return msg;
+    }
+
+    public static byte[] hashBlock(ProposeBlock block) throws IOException, NoSuchAlgorithmException {
+        ByteBuf buf = Unpooled.buffer();
+        serializer.serializeBody(block, buf);
+        buf.resetReaderIndex();
+        byte[] payload = new byte[buf.readableBytes()];
+        buf.readBytes(payload);
+        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+        return digest.digest(payload);
     }
 
     public final static SignedMessageSerializer<ProposeBlock> serializer = new SignedMessageSerializer<ProposeBlock>() {

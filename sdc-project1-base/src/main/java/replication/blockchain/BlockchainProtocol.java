@@ -40,9 +40,10 @@ public class BlockchainProtocol extends GenericProtocol {
 	
     private final HashMap<UUID, AppendRequest> pendingRequests = new HashMap<>(); //pending client requests
     
-    private final HashMap<byte[], ProposeBlock> blocks = new HashMap<>(); //blocks by their hash
-    private final HashMap<byte[], List<byte[]>> children = new HashMap<>(); //children of each block
-    private byte[] head; //hash of the current head block
+    private final HashMap<UUID, ProposeBlock> blocks = new HashMap<>(); //blocks by their ID
+    //private final HashMap<byte[], List<byte[]>> children = new HashMap<>(); //children of each block, used for forks
+    private UUID head; //ID of the current head block
+	private byte[] headHash; //hash of the current head block
 
     private long committedIndex = -1; //index of the highest committed block
     private static final int BLOCK_COMMIT_DEPTH = 2; //number of blocks after which a block is considered committed
@@ -88,26 +89,59 @@ public class BlockchainProtocol extends GenericProtocol {
 
 	public void handleAppendRequest(AppendRequest request, short protoID) {
 		try{
-			
-
-            logger.info("Sending Broadcast request to underlying protocol");
-			BroadcastRequest req = new BroadcastRequest(self, request.encode(), myPrivateKey);
-			sendRequest(req, BROADCAST_PROTO_ID);
+			//verify the request signature, not sure that check is correct 
+			if(!request.checkSignature(this.replicas.get(request.getSource()))){
+				logger.error("AppendRequest signature verification failed, dropping request");
+				return;
+			}
+			//store the request as pending
+			this.pendingRequests.put(request.getRequestID(), request);
+			boolean _isMyRound = true; //replace with round robin check, otherwise everyone proposes and manage forks
+			if(_isMyRound){
+				//create a new block including the client request
+				List<byte[]> transactions = List.of(request.getClientRequest());
+				ProposeBlock pb = new ProposeBlock(UUID.randomUUID(), this.headHash, this.committedIndex + 1, this.round, this.self, transactions);
+				pb.sign(this.myPrivateKey);
+				//send the block proposal via the underlying broadcast protocol
+				logger.info("Created new block proposal {}, sending via broadcast", pb.getBlockId());
+				BroadcastRequest br = new BroadcastRequest(this.self, pb.encode(), this.myPrivateKey);
+				sendRequest(br, BROADCAST_PROTO_ID);
+			}
 		}catch(Exception e){
 			logger.error("Error sending BroadcastRequest to underlying protocol", e);
 		}
 	}
 
-	// when the dissemination protocol responds with a notification, trigger a notification for the DLM
 	public void uponBroadcastDeliver(DeliveryNotification notification, short sourceProto) {
-		//Just trigger the notification to the DLM
 		try{
-			logger.info("Received Broadcast delivery notification, delivering to upper layer");
-			AppendRequest ar = AppendRequest.decode(notification.getPayload());
-			triggerNotification(new DeliverEntryNotification(ar.getRequestID(), ar.getClientID(), ar.getClientRequest(), ar.getServerSignature()));
+			notification.checkSignature(replicas.get(notification.getOriginalSender()), "SHA256withRSA");
+			//decode the delivered message as a ProposeBlock
+			ProposeBlock pb = ProposeBlock.decode(notification.getPayload());
+			//verify the block signature
+			if(!pb.verifySignature(this.replicas.get(pb.getProposer()))){
+				logger.error("ProposeBlock signature verification failed, dropping message");
+				return;
+			}
+			if(!pb.getPreviousBlockHash().equals(ProposeBlock.hashBlock(this.blocks.get(this.head)))){
+				logger.error("ProposeBlock previous hash does not match current head, dropping message");
+				return;
+			}
+			if(pb.getIndex()!= this.blocks.get(head).getIndex() + 1){
+				logger.error("ProposeBlock index incorrect, dropping message");
+				return;
+			}
+			//store the block
+			this.blocks.put(pb.getBlockId(), pb);
+			//update head
+			this.head = pb.getBlockId();
+			this.headHash = ProposeBlock.hashBlock(pb);
+			logger.info("New block {} added to the blockchain at index {}", pb.getBlockId(), pb.getIndex());
+			//check if any block can be committed, or should be done in another method?
+			
+
+
 		}catch(Exception e){
-			logger.error("Error decoding AppendRequest from broadcast payload", e);
+			logger.error("Error processing delivered Broadcast message", e);
 		}
-		//Trigger the notification to the DLM
 	}
 }
