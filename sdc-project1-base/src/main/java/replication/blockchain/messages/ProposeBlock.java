@@ -27,7 +27,6 @@ public class ProposeBlock extends SignedProtoMessage{
     private long round;
     private Host proposer;
     private List<byte[]> transactions; //list of transactions (client requests) serialized
-    private byte[] signature;
 
     public ProposeBlock(UUID blockID, byte[] previousBlockHash, long index, long round, Host proposer, List<byte[]> transactions) {
         super(ProposeBlock.MSG_ID);
@@ -37,7 +36,6 @@ public class ProposeBlock extends SignedProtoMessage{
         this.round = round;
         this.proposer = proposer;
         this.transactions = transactions;
-        this.signature = null;
     }
     public UUID getBlockId() {
         return blockId;
@@ -56,55 +54,6 @@ public class ProposeBlock extends SignedProtoMessage{
     }
     public List<byte[]> getTransactions() {
         return transactions;
-    }
-    public byte[] getSignature() {
-        return signature;
-    }
-
-    public void sign(PrivateKey key) throws InvalidKeyException, NoSuchAlgorithmException,SignatureException, IOException {
-        ByteBuf buf = Unpooled.buffer();
-        serializer.serializeBody(this, buf);
-        buf.resetReaderIndex();
-        byte[] payload = new byte[buf.readableBytes()];
-        buf.readBytes(payload);
-        this.signature = SignaturesHelper.generateSignature(payload, key);      
-    }
-
-    public boolean verifySignature(PublicKey key)  throws SignatureException, NoSuchAlgorithmException, InvalidKeyException, IOException {
-        ByteBuf buf = Unpooled.buffer();
-        serializer.serializeBody(this, buf);
-        buf.resetReaderIndex();
-        byte[] payload = new byte[buf.readableBytes()];
-        buf.readBytes(payload);
-        return SignaturesHelper.checkSignature(payload, this.signature, key);
-    }
-
-    public byte[] encode() throws IOException {
-        ByteBuf buf = Unpooled.buffer();
-        serializer.serialize(this, buf);
-        if(this.signature != null) {
-            buf.writeInt(this.signature.length);
-            buf.writeBytes(this.signature);
-        }
-        else {
-            buf.writeInt(0);
-        }
-
-        buf.resetReaderIndex();
-        byte[] encoded = new byte[buf.readableBytes()];
-        buf.readBytes(encoded);
-        return encoded;
-    }
-    public static ProposeBlock decode(byte[] data)  throws IOException {
-        ByteBuf buf = Unpooled.wrappedBuffer(data);
-        ProposeBlock msg = serializer.deserialize(buf);
-        int sigLength = buf.readInt();
-        if (sigLength > 0) {
-            byte[] signature = new byte[sigLength];
-            buf.readBytes(signature);
-            msg.signature = signature;
-        }
-        return msg;
     }
 
     public static byte[] hashBlock(ProposeBlock block) throws IOException, NoSuchAlgorithmException {
