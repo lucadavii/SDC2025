@@ -22,6 +22,8 @@ import pt.unl.fct.di.novasys.network.data.Host;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.UUID;
@@ -60,7 +62,12 @@ public class BlockchainProtocol extends GenericProtocol {
 	
 	@Override
 	public void init(Properties props) throws HandlerRegistrationException, IOException {
-		
+		// Initialize any necessary data structures or state
+		this.head = null;
+		this.headHash = null;
+		this.committedIndex = -1;
+		this.round = 0;
+
 		registerRequestHandler(AppendRequest.REQUEST_ID, this::handleAppendRequest);
 		subscribeNotification(DeliveryNotification.NOTIFICATION_ID, this::uponBroadcastDeliver);
 		subscribeNotification(ChannelAvailable.NOTIFICATION_ID, this::uponChannelAvailable);
@@ -89,11 +96,12 @@ public class BlockchainProtocol extends GenericProtocol {
 		this.myPrivateKey = notification.getMyPrivateKey();			
 		this.myPublicKey = notification.getMyPublicKey();
 		logger.info("Channel available {}", this.self);
+		this.replicas.put(this.self, this.myPublicKey);
 	}
 
 	private boolean isMyRound(long round) {
 		//simple round robin based on the order of replicas in the map
-		List<Host> replicaList = List.copyOf(this.replicas.keySet());
+		List<Host> replicaList = new ArrayList<>(this.replicas.keySet());
 		if (this.self!=null && !replicaList.contains(this.self)) {
 			replicaList.add(this.self);
 		}
@@ -107,12 +115,20 @@ public class BlockchainProtocol extends GenericProtocol {
 
 			//store the request as pending
 			this.pendingRequests.put(request.getRequestID(), request);
-			if(isMyRound(this.round)){
+			if(isMyRound(this.round) && !this.pendingRequests.isEmpty()) {
+
 				long newIndex = (this.head==null) ? 0 : this.blocks.get(this.head).getIndex() + 1;
 				byte[] previousHash = (this.head==null) ? new byte[32] : this.headHash;
 					
 				//create a new block including the client request
-				List<byte[]> transactions = List.of(request.getClientRequest());
+				List<byte[]> transactions = new ArrayList<>();
+				List<UUID> toRemove = new ArrayList<>();
+
+				for(AppendRequest ar : this.pendingRequests.values()) {
+					transactions.add(ar.encode());
+					toRemove.add(ar.getRequestID());
+				}
+
 				ProposeBlock pb = new ProposeBlock(UUID.randomUUID(), previousHash, newIndex, this.round, this.self, transactions);
 				pb.signMessage(this.myPrivateKey);
 				//send the block proposal via the underlying broadcast protocol
@@ -125,6 +141,11 @@ public class BlockchainProtocol extends GenericProtocol {
 
 				BroadcastRequest br = new BroadcastRequest(this.self, payload, this.myPrivateKey);
 				sendRequest(br, BROADCAST_PROTO_ID);
+
+				//clear pending requests
+				for(UUID reqID : toRemove) {
+					this.pendingRequests.remove(reqID);
+				}
 			}
 		}catch(Exception e){
 			logger.error("Error sending BroadcastRequest to underlying protocol", e);
@@ -144,6 +165,12 @@ public class BlockchainProtocol extends GenericProtocol {
 			}
 			if(!pb.checkSignature(proposerKey)) {
 				logger.warn("Invalid signature for block proposal {}, ignoring", pb.getBlockId());
+				return;
+			}
+			//check if the block's index is duplicate: fork management is not implemented in this simple version
+			//as the assumption is one replica appends at a time
+			if(this.indexToBlockID.containsKey(pb.getIndex())) {
+				logger.warn("Duplicate block index {} for block proposal {}, ignoring", pb.getIndex(), pb.getBlockId());
 				return;
 			}
 			//store the block
