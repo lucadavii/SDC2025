@@ -1,0 +1,105 @@
+package replication.blockchain.messages;
+import java.util.UUID;
+import java.util.List;
+import java.util.ArrayList;
+
+import pt.unl.fct.di.novasys.babel.generic.signed.SignedProtoMessage;
+import pt.unl.fct.di.novasys.network.data.Host;
+import pt.unl.fct.di.novasys.babel.generic.signed.SignedMessageSerializer;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+
+import java.io.IOException;
+import java.security.NoSuchAlgorithmException;
+
+public class ProposeBlock extends SignedProtoMessage{
+    public final static short MSG_ID = 901;
+
+    private UUID blockId;
+    private byte[] previousBlockHash; //hash of the previous block
+    private long index;
+    private Host proposer;
+    private List<byte[]> transactions; //list of transactions (client requests) serialized
+
+    public ProposeBlock(UUID blockID, byte[] previousBlockHash, long index, Host proposer, List<byte[]> transactions) {
+        super(ProposeBlock.MSG_ID);
+        this.blockId = blockID;
+        this.previousBlockHash = previousBlockHash;
+        this.index = index;
+        this.proposer = proposer;
+        this.transactions = transactions;
+    }
+    public UUID getBlockId() {
+        return blockId;
+    }
+    public byte[] getPreviousBlockHash() {
+        return previousBlockHash;
+    }
+    public long getIndex() {
+        return index;
+    }
+    public Host getProposer() {
+        return proposer;
+    }
+    public List<byte[]> getTransactions() {
+        return transactions;
+    }
+
+    public static byte[] hashBlock(ProposeBlock block) throws IOException, NoSuchAlgorithmException {
+        ByteBuf buf = Unpooled.buffer();
+        serializer.serializeBody(block, buf);
+        buf.resetReaderIndex();
+        byte[] payload = new byte[buf.readableBytes()];
+        buf.readBytes(payload);
+        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+        return digest.digest(payload);
+    }
+
+    public final static SignedMessageSerializer<ProposeBlock> serializer = new SignedMessageSerializer<ProposeBlock>() {
+        @Override
+        public void serializeBody(ProposeBlock msg, ByteBuf out) throws IOException {
+            Host.serializer.serialize(msg.proposer, out);
+            out.writeLong(msg.blockId.getMostSignificantBits());
+            out.writeLong(msg.blockId.getLeastSignificantBits());
+            out.writeInt(msg.previousBlockHash.length);
+            out.writeBytes(msg.previousBlockHash);
+            out.writeLong(msg.index);
+            if (msg.transactions != null) {
+                out.writeInt(msg.transactions.size());
+                for (byte[] tx : msg.transactions) {
+                    out.writeInt(tx.length);
+                    out.writeBytes(tx);
+                }
+            }
+            else {
+                out.writeInt(0);
+            }
+
+        }
+
+        @Override
+        public ProposeBlock deserializeBody(ByteBuf in) throws IOException {
+            Host proposer = Host.serializer.deserialize(in);
+            UUID blockId = new UUID(in.readLong(), in.readLong());
+            byte[] previousBlockHash = new byte[in.readInt()];
+            in.readBytes(previousBlockHash);
+            long index = in.readLong();
+            List<byte[]> transactions = new ArrayList<>();
+            int txCount = in.readInt();
+            for (int i = 0; i < txCount; i++) {
+                byte[] tx = new byte[in.readInt()];
+                in.readBytes(tx);
+                transactions.add(tx);
+            }
+            return new ProposeBlock(blockId, previousBlockHash, index, proposer, transactions);
+        }
+    };
+
+
+    @Override
+    public SignedMessageSerializer<? extends SignedProtoMessage> getSerializer() {
+        return serializer;
+    }
+
+
+}

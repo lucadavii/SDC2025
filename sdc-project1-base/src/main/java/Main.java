@@ -12,6 +12,7 @@ import app.DistributedLogManager;
 //import broadcast.CrashFaultReliableBroadcastProtocol;
 import broadcast.byzantinereliablebcast.ByzantineReliableBroadcastProtocol;
 import membership.staticmembership.StaticMembershipProtocol;
+import replication.blockchain.BlockchainProtocol;
 import pt.unl.fct.di.novasys.babel.core.Babel;
 import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
 import pt.unl.fct.di.novasys.babel.exceptions.InvalidParameterException;
@@ -42,7 +43,8 @@ public class Main {
 		Babel babel = Babel.getInstance();
 
 		DistributedLogManager dlm = new DistributedLogManager();
-		ReplicationProtocolPlaceholder rep = new ReplicationProtocolPlaceholder();
+		//ReplicationProtocolPlaceholder rep = new ReplicationProtocolPlaceholder();
+		BlockchainProtocol rep = new BlockchainProtocol();
 		ByzantineReliableBroadcastProtocol bcast = new ByzantineReliableBroadcastProtocol();
 		PBFTReplicationProtocol pbft = new PBFTReplicationProtocol();
 		
