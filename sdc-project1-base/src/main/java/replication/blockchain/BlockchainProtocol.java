@@ -55,7 +55,7 @@ public class BlockchainProtocol extends GenericProtocol {
 	private byte[] headHash; //hash of the current head block
 
     private long committedIndex = -1; //index of the highest committed block
-    private static final int BLOCK_COMMIT_DEPTH = 2; //number of blocks after which a block is considered committed
+    private static final int BLOCK_COMMIT_DEPTH = 6; //number of blocks after which a block is considered committed
 	private static final int BATCH_SIZE = 5;
 	private static final byte[] GENESIS_PREV_HASH = new byte[0];
     public BlockchainProtocol() {
