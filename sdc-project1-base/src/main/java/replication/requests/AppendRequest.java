@@ -92,9 +92,6 @@ public class AppendRequest extends ProtoRequest {
 	public byte[] getClientRequest() {
 		return clientRequest;
 	}
-	public Host getSource() {
-		return source;
-	}
 	public byte[] encode() throws IOException {
 		ByteBuf buf = Unpooled.buffer();
 		buf.writeLong(requestID.getMostSignificantBits());
