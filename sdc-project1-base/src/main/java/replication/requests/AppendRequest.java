@@ -85,6 +85,10 @@ public class AppendRequest extends ProtoRequest {
 		return clientID;
 	}
 
+	public Host getSource() {
+		return source;
+	}
+
 	public byte[] getClientRequest() {
 		return clientRequest;
 	}
