@@ -10,13 +10,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 
 import java.io.IOException;
-import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
-import java.security.PrivateKey;
-import java.security.PublicKey;
-import java.security.SignatureException;
-
-import utils.SignaturesHelper;
 
 public class ProposeBlock extends SignedProtoMessage{
     public final static short MSG_ID = 901;
@@ -24,16 +18,14 @@ public class ProposeBlock extends SignedProtoMessage{
     private UUID blockId;
     private byte[] previousBlockHash; //hash of the previous block
     private long index;
-    private long round;
     private Host proposer;
     private List<byte[]> transactions; //list of transactions (client requests) serialized
 
-    public ProposeBlock(UUID blockID, byte[] previousBlockHash, long index, long round, Host proposer, List<byte[]> transactions) {
+    public ProposeBlock(UUID blockID, byte[] previousBlockHash, long index, Host proposer, List<byte[]> transactions) {
         super(ProposeBlock.MSG_ID);
         this.blockId = blockID;
         this.previousBlockHash = previousBlockHash;
         this.index = index;
-        this.round = round;
         this.proposer = proposer;
         this.transactions = transactions;
     }
@@ -45,9 +37,6 @@ public class ProposeBlock extends SignedProtoMessage{
     }
     public long getIndex() {
         return index;
-    }
-    public long getRound() {
-        return round;
     }
     public Host getProposer() {
         return proposer;
@@ -75,7 +64,6 @@ public class ProposeBlock extends SignedProtoMessage{
             out.writeInt(msg.previousBlockHash.length);
             out.writeBytes(msg.previousBlockHash);
             out.writeLong(msg.index);
-            out.writeLong(msg.round);
             if (msg.transactions != null) {
                 out.writeInt(msg.transactions.size());
                 for (byte[] tx : msg.transactions) {
@@ -96,7 +84,6 @@ public class ProposeBlock extends SignedProtoMessage{
             byte[] previousBlockHash = new byte[in.readInt()];
             in.readBytes(previousBlockHash);
             long index = in.readLong();
-            long round = in.readLong();
             List<byte[]> transactions = new ArrayList<>();
             int txCount = in.readInt();
             for (int i = 0; i < txCount; i++) {
@@ -104,7 +91,7 @@ public class ProposeBlock extends SignedProtoMessage{
                 in.readBytes(tx);
                 transactions.add(tx);
             }
-            return new ProposeBlock(blockId, previousBlockHash, index, round, proposer, transactions);
+            return new ProposeBlock(blockId, previousBlockHash, index, proposer, transactions);
         }
     };
 
