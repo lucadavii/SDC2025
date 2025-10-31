@@ -46,7 +46,7 @@ public class Main {
 		//ReplicationProtocolPlaceholder rep = new ReplicationProtocolPlaceholder();
 		BlockchainProtocol rep = new BlockchainProtocol();
 		ByzantineReliableBroadcastProtocol bcast = new ByzantineReliableBroadcastProtocol();
-		PBFTReplicationProtocol pbft = new PBFTReplicationProtocol();
+		//PBFTReplicationProtocol pbft = new PBFTReplicationProtocol();
 		
 		//To simplify lets use this protocol again
 		StaticMembershipProtocol smp = new StaticMembershipProtocol();
@@ -54,14 +54,14 @@ public class Main {
 		babel.registerProtocol(dlm);
 		babel.registerProtocol(rep);
 		babel.registerProtocol(bcast);
-		babel.registerProtocol(pbft);
+		//babel.registerProtocol(pbft);
 		
 		babel.registerProtocol(smp);
 
 		dlm.init(props);
 		rep.init(props);
 		bcast.init(props);
-		pbft.init(props);
+		//pbft.init(props);
 		
 		smp.init(props);
 
