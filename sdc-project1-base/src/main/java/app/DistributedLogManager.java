@@ -59,8 +59,8 @@ public class DistributedLogManager extends GenericProtocol {
 	private long nextEntryIndex;
 	private HashMap<Long, String> logEntries;
 
-	// Change this if required
-	private final short underlyingProtocolID = 900;
+	// Selected replication protocol (default BRB placeholder 900). Can be overridden via props key 'replication_protocol'.
+	private short underlyingProtocolID = 900;
 
 	// Crypto info
 	private Host myself;
@@ -98,6 +98,16 @@ public class DistributedLogManager extends GenericProtocol {
 		serverProps.setProperty(SimpleServerChannel.PORT_KEY, props.getProperty(SERVER_PORT_KEY));
 
 		clientChannel = createChannel(SimpleServerChannel.NAME, serverProps);
+
+		String repl = props.getProperty("replication_protocol", "brb").toLowerCase();
+		switch (repl) {
+			case "pbft":
+				underlyingProtocolID = replication.pbft.PBFTReplicationProtocol.PROTO_ID;
+				break;
+			case "brb":
+			default:
+				underlyingProtocolID = 900; // existing placeholder
+		}
 
 		registerMessageSerializer(clientChannel, AppendToLog.MESSAGE_ID, AppendToLog.serializer);
 		registerMessageSerializer(clientChannel, ReadLogEntryRequest.MESSAGE_ID, ReadLogEntryRequest.serializer);

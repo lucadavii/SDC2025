@@ -1,3 +1,7 @@
 *.log
-target
+# Ignore build output directories (Maven/Gradle)
+target/
+**/target/
+/sdc-project1-base/target/
+/sdc-project1-client/target/
 .DS_Store

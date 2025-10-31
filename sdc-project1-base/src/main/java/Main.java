@@ -18,6 +18,7 @@ import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
 import pt.unl.fct.di.novasys.babel.exceptions.InvalidParameterException;
 import pt.unl.fct.di.novasys.babel.exceptions.ProtocolAlreadyExistsException;
 import replication.ReplicationProtocolPlaceholder;
+import replication.pbft.PBFTReplicationProtocol;
 
 public class Main {
 
@@ -45,6 +46,7 @@ public class Main {
 		//ReplicationProtocolPlaceholder rep = new ReplicationProtocolPlaceholder();
 		BlockchainProtocol rep = new BlockchainProtocol();
 		ByzantineReliableBroadcastProtocol bcast = new ByzantineReliableBroadcastProtocol();
+		PBFTReplicationProtocol pbft = new PBFTReplicationProtocol();
 		
 		//To simplify lets use this protocol again
 		StaticMembershipProtocol smp = new StaticMembershipProtocol();
@@ -52,12 +54,14 @@ public class Main {
 		babel.registerProtocol(dlm);
 		babel.registerProtocol(rep);
 		babel.registerProtocol(bcast);
+		babel.registerProtocol(pbft);
 		
 		babel.registerProtocol(smp);
 
 		dlm.init(props);
 		rep.init(props);
 		bcast.init(props);
+		pbft.init(props);
 		
 		smp.init(props);
 
