@@ -29,160 +29,199 @@ import replication.requests.AppendRequest;
 
 public class PBFTReplicationProtocol extends GenericProtocol {
 
-	public static final String PROTO_NAME = "PBFTReplication";
-	public static final short PROTO_ID = 910;
+    public static final String PROTO_NAME = "PBFTReplication";
+    public static final short PROTO_ID = 910;
 
-	private final Logger logger = LogManager.getLogger(PBFTReplicationProtocol.class);
+    public static final String PARAM_F = "f";
 
-	private Host myself;
-	private PrivateKey myPrivateKey;
-	private PublicKey myPublicKey;
+    public static final String PARAM_N = "n";
 
-	private final HashSet<Host> replicas;
-	private final HashMap<Host, PublicKey> publicKeys;
+    private final Logger logger = LogManager.getLogger(PBFTReplicationProtocol.class);
 
-	private int sharedChannelId;
+    private Host myself;
+    private PrivateKey myPrivateKey;
+    private PublicKey myPublicKey;
 
-	// PBFT state
-	private long currentView;
-	private long lastAssignedSeq;
+    private final HashSet<Host> replicas;
+    private final HashMap<Host, PublicKey> publicKeys;
 
-	private static class InstanceState {
-		final UUID opId;
-		final byte[] clientPayload;
-		final byte[] digest;
-		final HashSet<Host> prepares = new HashSet<>();
-		final HashSet<Host> commits = new HashSet<>();
-		boolean decided = false;
-		InstanceState(UUID opId, byte[] clientPayload, byte[] digest){
-			this.opId = opId;
-			this.clientPayload = clientPayload;
-			this.digest = digest;
-		}
-	}
+    private int sharedChannelId;
 
-	private final Map<Long, InstanceState> instanceBySeq;
-	private final Map<UUID, Long> seqByOp;
+    private int f;
 
-	public PBFTReplicationProtocol() {
-		super(PROTO_NAME, PROTO_ID);
-		this.replicas = new HashSet<>();
-		this.publicKeys = new HashMap<>();
-		this.instanceBySeq = new HashMap<>();
-		this.seqByOp = new HashMap<>();
-		this.currentView = 0;
-		this.lastAssignedSeq = 0;
-	}
+    private int n;
 
-	@Override
-	public void init(Properties props) throws HandlerRegistrationException, IOException {
-		subscribeNotification(ChannelAvailable.NOTIFICATION_ID, this::uponChannelAvailable);
-		subscribeNotification(NeighborUp.NOTIFICATION_ID, this::uponNeighborUp);
-		subscribeNotification(NeighborDown.NOTIFICATION_ID, this::uponNeighborDown);
+    // PBFT state
+    private long currentView;
+    private long lastAssignedSeq;
 
-		registerRequestHandler(AppendRequest.REQUEST_ID, this::handleAppendRequest);
-	}
+    private static class InstanceState {
+        final UUID opId;
+        final byte[] clientPayload;
+        final byte[] digest;
+        final HashSet<Host> prepares = new HashSet<>();
+        final HashSet<Host> commits = new HashSet<>();
+        boolean decided = false;
+        InstanceState(UUID opId, byte[] clientPayload, byte[] digest){
+            this.opId = opId;
+            this.clientPayload = clientPayload;
+            this.digest = digest;
+        }
+    }
 
-	private void uponChannelAvailable(ChannelAvailable not, short from) {
-		this.myself = not.getMyHost();
-		this.myPrivateKey = not.getMyPrivateKey();
-		this.myPublicKey = not.getMyPublicKey();
-		this.publicKeys.put(myself, myPublicKey);
+    private final Map<Long, InstanceState> instanceBySeq;
+    private final Map<UUID, Long> seqByOp;
 
-		this.sharedChannelId = not.getChannelID();
-		registerSharedChannel(sharedChannelId);
-		setDefaultChannel(sharedChannelId);
+    public PBFTReplicationProtocol() {
+        super(PROTO_NAME, PROTO_ID);
+        this.replicas = new HashSet<>();
+        this.publicKeys = new HashMap<>();
+        this.instanceBySeq = new HashMap<>();
+        this.seqByOp = new HashMap<>();
+        this.currentView = 0;
+        this.lastAssignedSeq = 0;
+    }
 
-		// Register message serializers and handlers
-		registerMessageSerializer(sharedChannelId, ClientProposalMessage.MESSAGE_ID, ClientProposalMessage.serializer);
-		registerMessageSerializer(sharedChannelId, PrePrepareMessage.MESSAGE_ID, PrePrepareMessage.serializer);
-		registerMessageSerializer(sharedChannelId, PrepareMessage.MESSAGE_ID, PrepareMessage.serializer);
-		registerMessageSerializer(sharedChannelId, CommitMessage.MESSAGE_ID, CommitMessage.serializer);
-		try {
-			registerMessageHandler(sharedChannelId, ClientProposalMessage.MESSAGE_ID, this::uponClientProposal);
-			registerMessageHandler(sharedChannelId, PrePrepareMessage.MESSAGE_ID, this::uponPrePrepare);
-			registerMessageHandler(sharedChannelId, PrepareMessage.MESSAGE_ID, this::uponPrepare);
-			registerMessageHandler(sharedChannelId, CommitMessage.MESSAGE_ID, this::uponCommit);
-		} catch (HandlerRegistrationException e) {
-			logger.error("Failed to register PBFT handlers", e);
-		}
-	}
+    @Override
+    public void init(Properties props) throws HandlerRegistrationException, IOException {
+        subscribeNotification(ChannelAvailable.NOTIFICATION_ID, this::uponChannelAvailable);
+        subscribeNotification(NeighborUp.NOTIFICATION_ID, this::uponNeighborUp);
+        subscribeNotification(NeighborDown.NOTIFICATION_ID, this::uponNeighborDown);
 
-	private void uponNeighborUp(NeighborUp not, short from) {
-		replicas.add(not.getNeighbor());
-		publicKeys.put(not.getNeighbor(), not.getPublicKey());
-	}
+        // Load the statically configured 'f' parameter
+        String fStr = props.getProperty(PARAM_F);
+        if (fStr == null) {
+            logger.error(PARAM_F + " property not set");
+            throw new IOException(PARAM_F + " property not set");
+        }
+        try {
+            this.f = Integer.parseInt(fStr);
+            if (this.f < 0) throw new NumberFormatException("f must be non-negative");
+        } catch (NumberFormatException e) {
+            logger.error("Invalid " + PARAM_F + " property: " + fStr, e);
+            throw new IOException("Invalid " + PARAM_F + " property", e);
+        }
 
-	private void uponNeighborDown(NeighborDown not, short from) {
-		replicas.remove(not.getNeighbor());
-		publicKeys.remove(not.getNeighbor());
-	}
+        // Load the statically configured 'n' parameter
+        String nStr = props.getProperty(PARAM_N);
+        if (nStr == null) {
+            logger.error(PARAM_N + " property not set");
+            throw new IOException(PARAM_N + " property not set");
+        }
+        try {
+            this.n = Integer.parseInt(nStr);
+        } catch (NumberFormatException e) {
+            logger.error("Invalid " + PARAM_N + " property: " + nStr, e);
+            throw new IOException("Invalid " + PARAM_N + " property", e);
+        }
 
-	private Host getPrimary(long view) {
-		// Deterministic static primary: lexicographically smallest (address,port) among replicas + self
-		Host candidate = myself;
-		for (Host h : replicas) {
-			if (compareHosts(h, candidate) < 0) candidate = h;
-		}
-		return candidate;
-	}
+        // Validate the static configuration (n >= 3f + 1)
+        if (this.n < 3 * this.f + 1) {
+            String errorMsg = String.format(
+                "Invalid PBFT config: n (%d) must be >= 3f + 1 (%d)",
+                this.n, (3 * this.f + 1));
+            logger.error(errorMsg);
+            throw new IOException(errorMsg);
+        }
 
-	private int compareHosts(Host a, Host b) {
-		int ip = a.getAddress().getHostAddress().compareTo(b.getAddress().getHostAddress());
-		if (ip != 0) return ip;
-		return Integer.compare(a.getPort(), b.getPort());
-	}
+        registerRequestHandler(AppendRequest.REQUEST_ID, this::handleAppendRequest);
+    }
 
-	private byte[] digest(byte[] payload) {
-		try {
-			MessageDigest md = MessageDigest.getInstance("SHA-256");
-			return md.digest(payload);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
+    private void uponChannelAvailable(ChannelAvailable not, short from) {
+        this.myself = not.getMyHost();
+        this.myPrivateKey = not.getMyPrivateKey();
+        this.myPublicKey = not.getMyPublicKey();
+        this.publicKeys.put(myself, myPublicKey);
 
-	private int f() {
-		int n = replicas.size() + 1; // include self
-		return (n - 1) / 3; // floor
-	}
+        this.sharedChannelId = not.getChannelID();
+        registerSharedChannel(sharedChannelId);
+        setDefaultChannel(sharedChannelId);
 
-	private int quorum() {
-		return 2 * f() + 1;
-	}
+        // Register message serializers and handlers
+        registerMessageSerializer(sharedChannelId, ClientProposalMessage.MESSAGE_ID, ClientProposalMessage.serializer);
+        registerMessageSerializer(sharedChannelId, PrePrepareMessage.MESSAGE_ID, PrePrepareMessage.serializer);
+        registerMessageSerializer(sharedChannelId, PrepareMessage.MESSAGE_ID, PrepareMessage.serializer);
+        registerMessageSerializer(sharedChannelId, CommitMessage.MESSAGE_ID, CommitMessage.serializer);
+        try {
+            registerMessageHandler(sharedChannelId, ClientProposalMessage.MESSAGE_ID, this::uponClientProposal);
+            registerMessageHandler(sharedChannelId, PrePrepareMessage.MESSAGE_ID, this::uponPrePrepare);
+            registerMessageHandler(sharedChannelId, PrepareMessage.MESSAGE_ID, this::uponPrepare);
+            registerMessageHandler(sharedChannelId, CommitMessage.MESSAGE_ID, this::uponCommit);
+        } catch (HandlerRegistrationException e) {
+            logger.error("Failed to register PBFT handlers", e);
+        }
+    }
 
-	private void handleAppendRequest(AppendRequest request, short sourceProto) {
-		try {
-			// If I'm not the primary, forward to primary as a client proposal
-			Host primary = getPrimary(currentView);
-			if (!primary.equals(myself)) {
+    private void uponNeighborUp(NeighborUp not, short from) {
+        replicas.add(not.getNeighbor());
+        publicKeys.put(not.getNeighbor(), not.getPublicKey());
+    }
+
+    private void uponNeighborDown(NeighborDown not, short from) {
+        replicas.remove(not.getNeighbor());
+        publicKeys.remove(not.getNeighbor());
+    }
+
+    private Host getPrimary(long view) {
+        // Deterministic static primary: lexicographically smallest (address,port) among replicas + self
+        Host candidate = myself;
+        for (Host h : replicas) {
+            if (compareHosts(h, candidate) < 0) candidate = h;
+        }
+        return candidate;
+    }
+
+    private int compareHosts(Host a, Host b) {
+        int ip = a.getAddress().getHostAddress().compareTo(b.getAddress().getHostAddress());
+        if (ip != 0) return ip;
+        return Integer.compare(a.getPort(), b.getPort());
+    }
+
+    private byte[] digest(byte[] payload) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            return md.digest(payload);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+    private int quorum() {
+        // Use the configured this.n and this.f
+        return (int) Math.ceil((double) (this.n + this.f) / 2.0);
+    }
+
+    private void handleAppendRequest(AppendRequest request, short sourceProto) {
+        try {
+            // If I'm not the primary, forward to primary as a client proposal
+            Host primary = getPrimary(currentView);
+            if (!primary.equals(myself)) {
                 logger.info("PBFT: forwarding client proposal {} to primary {}", request.getRequestID(), primary);
-				ClientProposalMessage cpm = new ClientProposalMessage(myself, request.encode());
-				sendMessage(cpm, primary);
-				return;
-			}
+                ClientProposalMessage cpm = new ClientProposalMessage(myself, request.encode());
+                sendMessage(cpm, primary);
+                return;
+            }
 
-			// I'm primary: create new sequence and start PBFT
-			long seq = ++lastAssignedSeq;
-			byte[] payload = request.encode();
-			byte[] dg = digest(payload);
-			InstanceState st = new InstanceState(request.getRequestID(), payload, dg);
-			instanceBySeq.put(seq, st);
-			seqByOp.put(request.getRequestID(), seq);
+            // I'm primary: create new sequence and start PBFT
+            long seq = ++lastAssignedSeq;
+            byte[] payload = request.encode();
+            byte[] dg = digest(payload);
+            InstanceState st = new InstanceState(request.getRequestID(), payload, dg);
+            instanceBySeq.put(seq, st);
+            seqByOp.put(request.getRequestID(), seq);
 
             logger.info("PBFT: primary pre-prepare view={} seq={} opId={}", currentView, seq, request.getRequestID());
             PrePrepareMessage ppm = new PrePrepareMessage(currentView, seq, dg, payload, myself);
             ppm.signMessage(myPrivateKey);
-			broadcast(ppm);
-			// Primary implicitly counts its own prepare
-			recordPrepare(seq, myself);
+            broadcast(ppm);
+            // Primary implicitly counts its own prepare
+            recordPrepare(seq, myself);
             PrepareMessage pm = new PrepareMessage(currentView, seq, dg, myself);
             pm.signMessage(myPrivateKey);
-			broadcast(pm);
-		} catch (Exception e) {
-			logger.error("Error handling append request", e);
-		}
-	}
+            broadcast(pm);
+        } catch (Exception e) {
+            logger.error("Error handling append request", e);
+        }
+    }
 
     private void uponClientProposal(ClientProposalMessage msg, Host from, short pid, int ch) {
         if (!getPrimary(currentView).equals(myself)) return; // only primary handles
@@ -209,8 +248,8 @@ public class PBFTReplicationProtocol extends GenericProtocol {
         }
     }
 
-	private void uponPrePrepare(PrePrepareMessage msg, Host from, short pid, int ch) {
-		if (!from.equals(getPrimary(msg.getView()))) return; // must come from primary
+    private void uponPrePrepare(PrePrepareMessage msg, Host from, short pid, int ch) {
+        if (!from.equals(getPrimary(msg.getView()))) return; // must come from primary
         try {
             byte[] dg = digest(msg.getClientPayload());
             if (!MessageDigest.isEqual(dg, msg.getDigest())) return;
@@ -220,17 +259,17 @@ public class PBFTReplicationProtocol extends GenericProtocol {
                 instanceBySeq.put(msg.getSeq(), st);
             }
             logger.info("PBFT: replica received PrePrepare view={} seq={} from {}", msg.getView(), msg.getSeq(), from);
-			// send prepare
-			recordPrepare(msg.getSeq(), myself);
+            // send prepare
+            recordPrepare(msg.getSeq(), myself);
             PrepareMessage pm = new PrepareMessage(msg.getView(), msg.getSeq(), msg.getDigest(), myself);
             pm.signMessage(myPrivateKey);
-			broadcast(pm);
-		} catch (Exception e) {
-			logger.error("Error on PrePrepare", e);
-		}
-	}
+            broadcast(pm);
+        } catch (Exception e) {
+            logger.error("Error on PrePrepare", e);
+        }
+    }
 
-	private void uponPrepare(PrepareMessage msg, Host from, short pid, int ch) {
+    private void uponPrepare(PrepareMessage msg, Host from, short pid, int ch) {
         if (!verifySender(from)) return;
         InstanceState st = instanceBySeq.get(msg.getSeq());
         if (st == null) {
@@ -240,15 +279,17 @@ public class PBFTReplicationProtocol extends GenericProtocol {
         recordPrepare(msg.getSeq(), from);
         int count = st.prepares.size();
         logger.info("PBFT: replica received Prepare view={} seq={} from {}, prepares={}", msg.getView(), msg.getSeq(), from, count);
-		if (count >= quorum()) {
-			// broadcast commit (only once)
-			CommitMessage cm = new CommitMessage(msg.getView(), msg.getSeq(), msg.getDigest(), myself);
+        
+        // Use quorum() calculation
+        if (count >= quorum()) {
+            // broadcast commit (only once)
+            CommitMessage cm = new CommitMessage(msg.getView(), msg.getSeq(), msg.getDigest(), myself);
             try { cm.signMessage(myPrivateKey); } catch (Exception ignored) {}
-			broadcast(cm);
-		}
-	}
+            broadcast(cm);
+        }
+    }
 
-	private void uponCommit(CommitMessage msg, Host from, short pid, int ch) {
+    private void uponCommit(CommitMessage msg, Host from, short pid, int ch) {
         if (!verifySender(from)) return;
         InstanceState st = instanceBySeq.get(msg.getSeq());
         if (st == null) {
@@ -256,49 +297,49 @@ public class PBFTReplicationProtocol extends GenericProtocol {
             return;
         }
         recordCommit(msg.getSeq(), from);
-		if (st != null && !st.decided && st.commits.size() >= quorum()) {
-			st.decided = true;
-			try {
-				AppendRequest ar = AppendRequest.decode(st.clientPayload);
+        
+        // Use new quorum() calculation
+        if (st != null && !st.decided && st.commits.size() >= quorum()) {
+            st.decided = true;
+            try {
+                AppendRequest ar = AppendRequest.decode(st.clientPayload);
                 logger.info("PBFT: decided view={} seq={} opId={}", msg.getView(), msg.getSeq(), ar.getRequestID());
-				triggerNotification(new DeliverEntryNotification(ar.getRequestID(), ar.getClientID(), ar.getClientRequest(), ar.getServerSignature()));
-			} catch (Exception e) {
-				logger.error("Failed to deliver decided entry", e);
-			}
-		}
-	}
+                triggerNotification(new DeliverEntryNotification(ar.getRequestID(), ar.getClientID(), ar.getClientRequest(), ar.getServerSignature()));
+            } catch (Exception e) {
+                logger.error("Failed to deliver decided entry", e);
+            }
+        }
+    }
 
-	private InstanceState empty(long seq) {
-		InstanceState st = new InstanceState(null, new byte[0], new byte[0]);
-		instanceBySeq.put(seq, st);
-		return st;
-	}
+    private InstanceState empty(long seq) {
+        InstanceState st = new InstanceState(null, new byte[0], new byte[0]);
+        instanceBySeq.put(seq, st);
+        return st;
+    }
 
-	private boolean verifySender(Host from) {
-		return from.equals(myself) || publicKeys.containsKey(from);
-	}
+    private boolean verifySender(Host from) {
+        return from.equals(myself) || publicKeys.containsKey(from);
+    }
 
-	private void recordPrepare(long seq, Host who) {
-		InstanceState st = instanceBySeq.get(seq);
-		if (st == null) return;
-		st.prepares.add(who);
-	}
+    private void recordPrepare(long seq, Host who) {
+        InstanceState st = instanceBySeq.get(seq);
+        if (st == null) return;
+        st.prepares.add(who);
+    }
 
-	private void recordCommit(long seq, Host who) {
-		InstanceState st = instanceBySeq.get(seq);
-		if (st == null) return;
-		st.commits.add(who);
-	}
+    private void recordCommit(long seq, Host who) {
+        InstanceState st = instanceBySeq.get(seq);
+        if (st == null) return;
+        st.commits.add(who);
+    }
 
-	private void broadcast(ProtoMessage m) {
-		for (Host h : replicas) {
-			if (!h.equals(myself)) {
-				sendMessage(m, h);
-			}
-		}
-	}
+    private void broadcast(ProtoMessage m) {
+        for (Host h : replicas) {
+            if (!h.equals(myself)) {
+                sendMessage(m, h);
+            }
+        }
+    }
 
     // removed custom signature verification; SignedProtoMessage handles signing/verification at channel
 }
-
-
